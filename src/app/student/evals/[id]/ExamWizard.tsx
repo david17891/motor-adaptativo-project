@@ -7,6 +7,8 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { submitEvaluation, saveAnswer } from "./actions";
 import { useRouter } from "next/navigation";
+import { ensureMath } from "@/lib/math";
+import { useEffect } from "react";
 
 type Option = {
     id: string;
@@ -28,18 +30,26 @@ export default function ExamWizard({
     resultId,
     title,
     questions,
-    initialAnswers = {}
+    initialAnswers = {},
+    durationMinutes,
+    startedAt
 }: {
     resultId: string;
     title: string;
     questions: QuestionData[];
     initialAnswers?: Record<string, string>;
+    durationMinutes?: number | null;
+    startedAt?: Date;
 }) {
+
+
     const router = useRouter();
     const [currentIndex, setCurrentIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers);
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState<string | null>(null);
+    const [timeLeftPercent, setTimeLeftPercent] = useState(100);
+    const [timeLeftString, setTimeLeftString] = useState<string | null>(null);
 
     const isLast = currentIndex === questions.length - 1;
     const isFirst = currentIndex === 0;
@@ -69,8 +79,39 @@ export default function ExamWizard({
         if (!isFirst) setCurrentIndex(c => c - 1);
     };
 
-    const handleSubmit = () => {
-        if (answeredCount < total) {
+    // --- LÓGICA DEL TEMPORIZADOR ---
+    useEffect(() => {
+        if (!durationMinutes || !startedAt) return;
+
+        const durationMs = durationMinutes * 60 * 1000;
+        const endTime = new Date(startedAt).getTime() + durationMs;
+
+        const timer = setInterval(() => {
+            const now = new Date().getTime();
+            const diff = endTime - now;
+
+            if (diff <= 0) {
+                clearInterval(timer);
+                setTimeLeftString("00:00");
+                setTimeLeftPercent(0);
+                // Auto-submit si el tiempo se acaba
+                handleSubmit(true);
+                return;
+            }
+
+            const minutes = Math.floor(diff / 60000);
+            const seconds = Math.floor((diff % 60000) / 1000);
+            const display = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+            setTimeLeftString(display);
+            setTimeLeftPercent((diff / durationMs) * 100);
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [durationMinutes, startedAt]);
+
+    const handleSubmit = (auto: boolean = false) => {
+        if (!auto && answeredCount < total) {
             const confirmMissing = confirm(`Faltan ${total - answeredCount} preguntas por responder. ¿Estás seguro de enviar tu evaluación?`);
             if (!confirmMissing) return;
         }
@@ -91,20 +132,43 @@ export default function ExamWizard({
         <div className="max-w-4xl mx-auto space-y-6">
             {/* Header del Examen */}
             <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
+                <div className="flex-1">
                     <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">{title}</h1>
-                    <p className="text-zinc-500 text-sm mt-1">Estás tomando una evaluación oficial. No cierres esta ventana.</p>
+                    <p className="text-zinc-500 text-sm mt-1 flex items-center gap-2">
+                        <AlertTriangle size={14} className="text-orange-500" />
+                        Estás tomando una evaluación oficial. No cierres esta ventana.
+                    </p>
                 </div>
 
-                <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
-                    <span className="text-sm font-medium font-mono text-zinc-700 dark:text-zinc-300">
-                        Progreso: {answeredCount} de {total} ({progressPercent}%)
+                {timeLeftString && (
+                    <div className="flex flex-col items-center sm:items-end gap-1.5 min-w-[140px]">
+                        <div className="flex items-center gap-3 px-4 py-2 bg-orange-50 dark:bg-orange-950/40 border-2 border-orange-200 dark:border-orange-800/50 rounded-2xl shadow-sm">
+                            <span className="text-xs font-black text-orange-600 dark:text-orange-400 uppercase tracking-tighter">Tiempo</span>
+                            <span className="text-2xl font-black font-mono text-orange-700 dark:text-orange-300 leading-none">{timeLeftString}</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                            <div
+                                className={`h-full transition-all duration-1000 ${timeLeftPercent < 20 ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`}
+                                style={{ width: `${timeLeftPercent}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                <div className="hidden md:flex flex-col items-end gap-2 pr-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-600">
+                        Progreso del examen
                     </span>
-                    <div className="w-full sm:w-48 h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                        <div
-                            className="h-full bg-indigo-600 transition-all duration-300 ease-out"
-                            style={{ width: `${progressPercent}%` }}
-                        />
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-black text-zinc-700 dark:text-zinc-300">
+                            {answeredCount} / {total}
+                        </span>
+                        <div className="w-32 h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                            <div
+                                className="h-full bg-indigo-600 transition-all duration-500 ease-out"
+                                style={{ width: `${progressPercent}%` }}
+                            />
+                        </div>
                     </div>
                 </div>
             </div>
@@ -133,7 +197,7 @@ export default function ExamWizard({
                                     className={`aspect-square rounded-md text-xs font-bold flex items-center justify-center transition-all ${isCurrent
                                         ? "ring-2 ring-indigo-500 ring-offset-2 dark:ring-offset-zinc-950 bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
                                         : isAnswered
-                                            ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                                            ? "bg-zinc-900 text-white dark:bg-zinc-200 dark:text-zinc-900"
                                             : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-800"
                                         }`}
                                 >
@@ -167,7 +231,7 @@ export default function ExamWizard({
                         <div className="p-6 flex-grow">
                             <div className="prose dark:prose-invert max-w-none text-zinc-800 dark:text-zinc-200 text-[15px] mb-8 leading-relaxed">
                                 <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                    {currentQuestion.content.text || ""}
+                                    {ensureMath(currentQuestion.content.text || "")}
                                 </ReactMarkdown>
                             </div>
 
@@ -193,7 +257,7 @@ export default function ExamWizard({
                                             </div>
                                             <div className={`flex-1 overflow-x-auto ${isSelected ? "text-indigo-900 dark:text-indigo-200 font-medium" : "text-zinc-700 dark:text-zinc-300"}`}>
                                                 <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                                    {opt.text}
+                                                    {ensureMath(opt.text)}
                                                 </ReactMarkdown>
                                             </div>
                                         </button>
@@ -216,7 +280,7 @@ export default function ExamWizard({
                                 {!isLast && (
                                     <button
                                         onClick={handleNext}
-                                        className="px-4 py-2 bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-zinc-700 dark:hover:bg-zinc-300 transition-colors shadow-sm w-full sm:w-auto justify-center"
+                                        className="px-4 py-2 bg-zinc-900 dark:bg-zinc-200 text-white dark:text-zinc-900 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-zinc-800 dark:hover:bg-zinc-300 transition-colors shadow-sm w-full sm:w-auto justify-center"
                                     >
                                         Siguiente <ChevronRight size={16} />
                                     </button>
@@ -225,7 +289,7 @@ export default function ExamWizard({
 
                             {isLast && (
                                 <button
-                                    onClick={handleSubmit}
+                                    onClick={() => handleSubmit(false)}
                                     disabled={isPending}
                                     className={`px-6 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all shadow-md w-full sm:w-auto justify-center ${answeredCount < total
                                         ? "bg-orange-500 hover:bg-orange-600 text-white"
@@ -252,7 +316,7 @@ export default function ExamWizard({
                                     className={`w-8 h-8 rounded-md text-xs font-bold flex items-center justify-center ${currentIndex === idx
                                         ? "ring-2 ring-indigo-500 bg-indigo-100 text-indigo-700"
                                         : !!answers[q.id]
-                                            ? "bg-zinc-800 text-white"
+                                            ? "bg-zinc-900 text-white dark:bg-zinc-200 dark:text-zinc-900"
                                             : "bg-zinc-100 text-zinc-500 border border-zinc-200"
                                         }`}
                                 >

@@ -5,10 +5,28 @@ import { getNextAdaptiveQuestion, submitAdaptiveAnswer, EngineResponse } from '@
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { sessionId, questionId, selectedOptionId, timeSpentMs } = body;
+        const { sessionId, questionId, selectedOptionId, timeSpentMs, usedHint } = body;
 
         if (!sessionId || !questionId) {
             return NextResponse.json({ error: "Faltan parámetros requeridos." }, { status: 400 });
+        }
+
+        const forceFinish = body.forceFinish === true;
+
+        if (forceFinish || questionId === "TIME_EXPIRED") {
+            // Forzamos finalización
+            await prisma.dynamicSession.update({
+                where: { id: sessionId },
+                data: { status: "COMPLETED", completedAt: new Date() }
+            });
+            const engineResult = await getNextAdaptiveQuestion(sessionId); // Devolverá isFinished: true
+            return NextResponse.json(engineResult);
+        }
+
+        // Si es la carga inicial de la evaluación, solo pedimos la primera pregunta sin validar una anterior
+        if (questionId === "FIRST_LOAD") {
+            const engineResult = await getNextAdaptiveQuestion(sessionId);
+            return NextResponse.json(engineResult);
         }
 
         // 1. Obtener la pregunta original para saber cuál es la opción correcta
@@ -31,7 +49,8 @@ export async function POST(request: Request) {
             questionId,
             selectedOptionId,
             isCorrect,
-            timeSpentMs || 0
+            timeSpentMs || 0,
+            usedHint || false
         );
 
         // 4. Solicitar la siguiente pregunta al motor

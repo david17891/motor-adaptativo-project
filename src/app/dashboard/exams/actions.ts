@@ -2,6 +2,7 @@
 
 import prisma from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
+import { GoogleGenAI } from "@google/genai";
 
 export async function generateExamVersion(formData: FormData) {
     let title = formData.get("title") as string;
@@ -129,5 +130,79 @@ export async function deleteExamVersion(id: string) {
     } catch (error: any) {
         console.error("Error deleting exam version:", error);
         return { error: "No se pudo eliminar la plantilla. Puede que ya esté vinculada a evaluaciones o resultados de alumnos." };
+    }
+}
+
+export async function generateExamWithAIPrompt(prompt: string, availableTopics: string[]) {
+    try {
+        if (!process.env.GEMINI_API_KEY) {
+            return { error: "No se ha configurado la clave de API de Gemini." };
+        }
+
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+        const systemInstruction = `
+Eres un asistente experto en creación de evaluaciones. Tu objetivo es procesar las peticiones del profesor
+y devolver un estricto JSON que defina los parámetros para crear un examen. No devuelvas markdown, solo el JSON raw.
+El profesor te pedirá un examen y tú extraerás o deducirás:
+1. title: Un título adecuado para el examen
+2. questionCount: Número de preguntas solicitadas (por defecto 10 si no especifica)
+3. difficultyLevel: Dificultad general solicitada (0 a 5, donde 0 es variado, 1 muy facil, 5 muy dificil)
+4. topics: Una lista de las palabras clave o subtemas que mejor coincidan con lo que pide, basándote en la siguiente lista de subtemas disponibles en la base de datos:
+[${availableTopics.join(', ')}]
+Selecciona al menos 1 tema pertinente de los disponibles si es posible.
+
+Estructura de salida requerida:
+{
+  "title": "string",
+  "questionCount": number,
+  "difficultyLevel": number,
+  "topics": ["string"]
+}
+`;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                systemInstruction,
+                responseMimeType: "application/json"
+            }
+        });
+
+        const textResponse = response.text;
+        if (!textResponse) throw new Error("Respuesta vacía de Gemini");
+
+        let aiSchema;
+        try {
+            aiSchema = JSON.parse(textResponse);
+        } catch (e) {
+            // Intento de limpiar el json si tiene backticks
+            const cleaned = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+            aiSchema = JSON.parse(cleaned);
+        }
+
+        // Ya con el esquema, construimos un FormData falso para usar nuestra función base
+        const formData = new FormData();
+        formData.append("title", aiSchema.title || "Examen por IA");
+        formData.append("questionCount", (aiSchema.questionCount || 10).toString());
+        formData.append("difficultyLevel", (aiSchema.difficultyLevel || 0).toString());
+
+        if (aiSchema.topics && Array.isArray(aiSchema.topics)) {
+            aiSchema.topics.forEach((t: string) => formData.append("topics", t));
+        }
+
+        // Llamamos a generateExamVersion reusando la lógica para seleccionar preguntas y guardar en DB
+        const res = await generateExamVersion(formData);
+
+        if (res.error) {
+            return { error: `La IA entendió el prompt pero hubo un error generando: ${res.error}` };
+        }
+
+        return { success: true };
+
+    } catch (error: any) {
+        console.error("AI Generation Error: ", error);
+        return { error: "Error de IA: " + error.message };
     }
 }

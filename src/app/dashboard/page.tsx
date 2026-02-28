@@ -1,15 +1,28 @@
 import { currentUser } from "@clerk/nextjs/server";
-import { Link as LucideLink, ChevronRight, GraduationCap } from "lucide-react";
+import { ChevronRight, GraduationCap, Building2, FileText, Users as UsersIcon, Percent } from "lucide-react";
 import Link from 'next/link';
 import prisma from "@/lib/prisma";
+import { ReactNode } from "react";
+import { getGlobalStudentAlerts } from "./students/metrics.actions";
+import { AlertCircle, Clock, Zap } from "lucide-react";
 
-// Mock para simular los Cards de shadcn (ya que no los instalé formalmente aún para ser rápido)
-function CustomCard({ title, value, description }: { title: string, value: string, description?: string }) {
+function MetricCard({ title, value, description, icon, trend }: { title: string, value: string | number, description?: string, icon: ReactNode, trend?: string }) {
     return (
-        <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">{title}</h3>
-            <p className="text-2xl font-bold mt-2 text-zinc-900 dark:text-zinc-50">{value}</p>
-            {description && <p className="text-xs text-zinc-400 mt-1">{description}</p>}
+        <div className="bg-white dark:bg-zinc-950/50 border border-zinc-200 dark:border-zinc-800/80 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-all translate-x-4 -translate-y-4 scale-150 group-hover:scale-110 duration-500 text-blue-600 dark:text-blue-400">
+                {icon}
+            </div>
+            <div className="flex justify-between items-start mb-4">
+                <h3 className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">{title}</h3>
+                <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-xl">
+                    {icon}
+                </div>
+            </div>
+            <div className="flex items-baseline gap-2 relative z-10">
+                <p className="text-4xl font-black text-zinc-900 dark:text-zinc-50 tracking-tight">{value}</p>
+                {trend && <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full">{trend}</span>}
+            </div>
+            {description && <p className="text-xs text-zinc-400 mt-3 font-medium relative z-10">{description}</p>}
         </div>
     );
 }
@@ -29,6 +42,8 @@ export default async function DashboardPage() {
         ? Math.round(results.reduce((acc, r) => acc + (r.score || 0), 0) / results.length)
         : "N/A";
 
+    const alerts = await getGlobalStudentAlerts();
+
     return (
         <div className="space-y-8">
             <div>
@@ -40,11 +55,11 @@ export default async function DashboardPage() {
                 </p>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <CustomCard title="Escuelas Activas" value={tenantsCount.toString()} description="Tenants registrados" />
-                <CustomCard title="Evaluaciones Activas" value={examsCount.toString()} description="Versiones estáticas disponibles" />
-                <CustomCard title="Alumnos" value={studentsCount.toString()} description="Total en todos los grupos" />
-                <CustomCard title="Puntaje Promedio" value={globalAvg === "N/A" ? "N/A" : `${globalAvg}%`} description="Resultados globales" />
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                <MetricCard title="Sedes Activas" value={tenantsCount.toString()} description="Instituciones u organizaciones" icon={<Building2 size={24} strokeWidth={1.5} />} trend="Operativo" />
+                <MetricCard title="Exámenes Activos" value={examsCount.toString()} description="Versiones Listas para Evaluar" icon={<FileText size={24} strokeWidth={1.5} />} />
+                <MetricCard title="Estudiantes" value={studentsCount.toString()} description="Matrícula Total Global" icon={<UsersIcon size={24} strokeWidth={1.5} />} />
+                <MetricCard title="Rendimiento Global" value={globalAvg === "N/A" ? "N/A" : `${globalAvg}%`} description="Promedio Histórico" icon={<Percent size={24} strokeWidth={1.5} />} />
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
@@ -56,22 +71,48 @@ export default async function DashboardPage() {
                 </div>
 
                 <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6">
-                    <h2 className="text-lg font-semibold mb-4">Próximos Pasos</h2>
-                    <ul className="space-y-4">
-                        {[
-                            "Cargar banco de preguntas inicial",
-                            "Configurar primera versión de examen",
-                            "Dar de alta Sedes/Escuelas"
-                        ].map((task, i) => (
-                            <li key={i} className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-300">
-                                <div className="w-5 h-5 rounded-full border border-zinc-300 dark:border-zinc-700 flex items-center justify-center text-[10px]">
-                                    {i + 1}
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <AlertCircle className="text-red-500" size={18} /> Sistema de Alertas Tempranas
+                    </h2>
+
+                    {alerts.length === 0 ? (
+                        <div className="text-sm text-zinc-500 text-center py-8 border-2 border-dashed rounded-lg border-zinc-100 dark:border-zinc-900 bg-zinc-50 dark:bg-zinc-900/20">
+                            🎉 Todo en orden. No hay estudiantes en riesgo detectados.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {alerts.map((alert, i) => (
+                                <div key={i} className={`p-4 rounded-lg flex gap-3 border ${alert.severity === "HIGH"
+                                        ? "bg-red-50 border-red-100 dark:bg-red-900/10 dark:border-red-900/30"
+                                        : "bg-orange-50 border-orange-100 dark:bg-orange-900/10 dark:border-orange-900/30"
+                                    }`}>
+                                    <div className="mt-0.5">
+                                        {alert.type === "INACTIVITY" ? (
+                                            <Clock className={alert.severity === "HIGH" ? "text-red-600" : "text-orange-600"} size={16} />
+                                        ) : (
+                                            <Zap className={alert.severity === "HIGH" ? "text-red-600" : "text-orange-600"} size={16} />
+                                        )}
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <Link href={`/dashboard/students/${alert.studentId}`} className="text-sm font-bold text-zinc-900 dark:text-zinc-100 hover:underline">
+                                                {alert.studentName}
+                                            </Link>
+                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${alert.severity === "HIGH"
+                                                    ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400"
+                                                    : "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400"
+                                                }`}>
+                                                {alert.severity}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs mt-1 text-zinc-700 dark:text-zinc-300 font-medium">
+                                            {alert.message}
+                                        </p>
+                                    </div>
                                 </div>
-                                {task}
-                                <ChevronRight className="ml-auto text-zinc-300" size={14} />
-                            </li>
-                        ))}
-                    </ul>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
 

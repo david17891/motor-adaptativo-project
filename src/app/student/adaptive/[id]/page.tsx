@@ -36,9 +36,10 @@ export default async function AdaptiveEvaluationRunPage({ params }: { params: Pr
             data: {
                 adaptiveEvaluationId: adaptiveEval.id,
                 studentId,
-                status: "IN_PROGRESS"
-                // currentLevel es 2 por defecto en schema
-            }
+                status: "IN_PROGRESS",
+                durationMinutes: (adaptiveEval as any).durationMinutes,
+                startedAt: new Date()
+            } as any
         });
     }
 
@@ -53,6 +54,8 @@ export default async function AdaptiveEvaluationRunPage({ params }: { params: Pr
                 sessionId={session.id}
                 evaluationTitle={adaptiveEval.title}
                 totalQuestions={adaptiveEval.totalQuestions}
+                durationMinutes={(session as any).durationMinutes}
+                startedAt={session.startedAt}
             />
         </div>
     );

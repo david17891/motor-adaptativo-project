@@ -25,7 +25,14 @@ export default async function QuestionsPage(props: { searchParams: Promise<{ are
         .map((a: any) => ({ name: a.area, count: a._count._all }))
         .sort((a: any, b: any) => b.count - a.count);
 
-    const availableAreas = availableAreasCounted.map((a: any) => a.name).filter(Boolean);
+    const availableAreasFilter = availableAreasCounted.map((a: any) => a.name).filter(Boolean);
+
+    // FASE A: Obtener el Catálogo Curricular
+    const curriculumAreas = await prisma.subjectArea.findMany({
+        where: { isActive: true },
+        include: { topics: true },
+        orderBy: { name: 'asc' }
+    });
 
     return (
         <div className="space-y-6">
@@ -51,37 +58,39 @@ export default async function QuestionsPage(props: { searchParams: Promise<{ are
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="space-y-2">
                             <label htmlFor="area" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                                Área o Materia
+                                Área o Materia Principal
                             </label>
-                            <input
-                                list="areasListQ"
-                                type="text"
+                            <select
                                 id="area"
                                 name="area"
                                 required
-                                placeholder="Ej. Matemáticas, Lectura Crítica..."
                                 className="w-full px-4 py-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                            />
-                            {availableAreas.length > 0 && (
-                                <datalist id="areasListQ">
-                                    {availableAreas.map((a: any) => (
-                                        <option key={a} value={a} />
-                                    ))}
-                                </datalist>
-                            )}
+                            >
+                                <option value="">Selecciona una Materia oficial...</option>
+                                {curriculumAreas.map(a => (
+                                    <option key={a.id} value={a.name}>{a.name}</option>
+                                ))}
+                            </select>
                         </div>
 
                         <div className="space-y-2">
                             <label htmlFor="subarea" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                                Subárea (Opcional)
+                                Subárea o Unidad (Opcional, pero recomendado)
                             </label>
+                            {/* Al no usar client components aquí, permitimos texto pero con datalist del catálogo entero para evitar errores typográficos comunes, idelamente se usa react estados para encadenar selects, pero el datalist funciona bien en server-components rápidos */}
                             <input
+                                list="topicsListQ"
                                 type="text"
                                 id="subarea"
                                 name="subarea"
                                 placeholder="Ej. Álgebra, Termodinámica..."
                                 className="w-full px-4 py-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                             />
+                            <datalist id="topicsListQ">
+                                {curriculumAreas.flatMap(a => a.topics).map((t: any) => (
+                                    <option key={t.id} value={t.name} />
+                                ))}
+                            </datalist>
                         </div>
 
                         <div className="space-y-2">

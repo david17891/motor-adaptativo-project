@@ -23,7 +23,8 @@ export async function submitAdaptiveAnswer(
     questionId: string,
     selectedOptionId: string | null,
     isCorrect: boolean,
-    timeSpentMs: number
+    timeSpentMs: number,
+    usedHint: boolean = false
 ) {
     const session = await prisma.dynamicSession.findUnique({
         where: { id: sessionId },
@@ -52,13 +53,23 @@ export async function submitAdaptiveAnswer(
         }
     });
 
-    // --- LÓGICA DE DIFICULTAD ---
-    // Si acierta, sube de nivel (hasta el máximo)
+    // --- LÓGICA DE DIFICULTAD Y EXPERIENCIA (XP) ---
+    // Si acierta, sube de nivel (hasta el máximo) y gana XP
     // Si falla, baja de nivel (hasta el mínimo)
     let nextLevel = session.currentLevel;
 
     if (isCorrect) {
         nextLevel = Math.min(MAX_LEVEL, nextLevel + 1);
+
+        // Gamification: Otorgar XP por respuesta correcta basado en la dificultad
+        let xpEarned = 10 * session.currentLevel;
+        if (usedHint) {
+            xpEarned = Math.max(0, xpEarned - 5); // Penalización por usar pista
+        }
+        await prisma.user.update({
+            where: { id: session.studentId },
+            data: { xp: { increment: xpEarned } } as any
+        });
     } else {
         nextLevel = Math.max(MIN_LEVEL, nextLevel - 1);
     }
@@ -82,7 +93,10 @@ export async function getNextAdaptiveQuestion(sessionId: string): Promise<Engine
         where: { id: sessionId },
         include: {
             adaptiveEvaluation: true,
-            answers: { orderBy: { orderIndex: 'asc' } }
+            answers: {
+                include: { question: true },
+                orderBy: { orderIndex: 'asc' }
+            }
         }
     });
 
@@ -91,7 +105,11 @@ export async function getNextAdaptiveQuestion(sessionId: string): Promise<Engine
         return { isFinished: true, finalScore: session.estimatedScore ?? 0, reason: "Ya finalizada." };
     }
 
-    const maxQuestions = session.adaptiveEvaluation.totalQuestions;
+    const isPractice = !session.adaptiveEvaluationId;
+    // Use the chose total questions from practice or the formal evaluation limit
+    const maxQuestions = (session as any).totalQuestions
+        || (isPractice ? 10 : session.adaptiveEvaluation?.totalQuestions)
+        || 10;
     const answeredCount = session.answers.length;
 
     // 1. CONDICIÓN DE PARO: Llegó al límite de preguntas
@@ -110,38 +128,104 @@ export async function getNextAdaptiveQuestion(sessionId: string): Promise<Engine
 
     // 3. SELECCIONAR SIGUIENTE PREGUNTA
     const askedQuestionIds = session.answers.map((a: any) => a.questionId);
+    const askedQuestionTexts = session.answers.map((a: any) => {
+        const content = (a.question as any)?.content;
+        return content?.text || content?.html || "";
+    }).filter(t => t !== "");
+
+    // Determinar campos de búsqueda según si es práctica o asignación formal
+    const searchArea = isPractice ? (session as any).practiceArea! : session.adaptiveEvaluation!.targetArea;
+    const searchSubarea = isPractice ? (session as any).practiceSubarea : session.adaptiveEvaluation!.targetSubarea;
+
+    console.log(`[Engine] Session: ${sessionId} | Area: ${searchArea} | Level: ${session.currentLevel} | Asked: ${askedQuestionIds.length}`);
 
     // Fetch candidate questions from the DB by area, level, and that haven't been asked
-    const allMatchingQuestions = await prisma.question.findMany({
-        where: {
-            area: session.adaptiveEvaluation.targetArea,
-            difficultyLevel: session.currentLevel,
-            id: { notIn: askedQuestionIds } // No repetir preguntas
+    let allMatchingQuestions: any[] = [];
+
+    // --- LÓGICA DE REPASO ESPACIADO ---
+    if (searchArea === "Repaso Espaciado") {
+        // Encontrar preguntas que el usuario ha fallado históricamente (DynamicSessionAnswer)
+        const failedAnswers = await prisma.dynamicSessionAnswer.findMany({
+            where: {
+                dynamicSession: { studentId: session.studentId },
+                isCorrect: false
+            },
+            select: { questionId: true },
+            distinct: ['questionId']
+        });
+        const failedIds = failedAnswers
+            .map(f => f.questionId)
+            .filter(id => !askedQuestionIds.includes(id));
+
+        console.log(`[Engine] Spaced Repetition: ${failedIds.length} failed questions remaining to review.`);
+
+        // Si no hay preguntas falladas y es la primera pregunta de la sesión
+        if (failedIds.length === 0 && askedQuestionIds.length === 0) {
+            await prisma.dynamicSession.update({
+                where: { id: sessionId },
+                data: {
+                    status: "COMPLETED",
+                    completedAt: new Date(),
+                    estimatedScore: 100
+                }
+            });
+            return {
+                isFinished: true,
+                finalScore: 100,
+                reason: "¡Felicidades! No tienes errores por repasar en este momento."
+            };
         }
-    });
+
+        allMatchingQuestions = await prisma.question.findMany({
+            where: {
+                id: { in: failedIds },
+                difficultyLevel: session.currentLevel // Mantener control de dificultad
+            }
+        });
+
+        // Si ya no le quedan falladas de este nivel, buscar falladas de cualquier nivel
+        if (allMatchingQuestions.length === 0) {
+            allMatchingQuestions = await prisma.question.findMany({
+                where: {
+                    id: { in: failedIds },
+                    // IMPORTANTE: Asegurarnos de no repetir preguntas incluso en el fallback de nivel
+                }
+            });
+            // El filtro de !askedQuestionIds ya se aplicó al generar failedIds arriba (línea 144)
+        }
+    } else {
+        // --- LÓGICA NORMAL ---
+        allMatchingQuestions = await prisma.question.findMany({
+            where: {
+                area: searchArea,
+                difficultyLevel: session.currentLevel,
+                id: { notIn: askedQuestionIds } // No repetir preguntas
+            }
+        });
+    }
 
     let candidateQuestions = allMatchingQuestions;
 
-    // Apply advanced subarea/topic filtering in memory if targetSubarea is defined (comma-separated list)
-    if (session.adaptiveEvaluation.targetSubarea && session.adaptiveEvaluation.targetSubarea.trim() !== '') {
+    // Apply advanced subarea/topic filtering in memory if searchSubarea is defined and it's not spaced repetition
+    if (searchSubarea && searchSubarea.trim() !== '' && searchArea !== "Repaso Espaciado") {
         const normalizeText = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
-        const topicsList = session.adaptiveEvaluation.targetSubarea
+        const topicsList = searchSubarea
             .split(',')
-            .map(t => normalizeText(t))
-            .filter(t => t.length > 0);
+            .map((t: string) => normalizeText(t))
+            .filter((t: string) => t.length > 0);
 
         if (topicsList.length > 0) {
             candidateQuestions = allMatchingQuestions.filter((q: any) => {
                 // Check against the literal `subarea` column
                 const normalizedSubarea = q.subarea ? normalizeText(q.subarea) : "";
-                const matchesSubareaColumn = topicsList.some(t => normalizedSubarea.includes(t));
+                const matchesSubareaColumn = topicsList.some((t: string) => normalizedSubarea.includes(t));
 
                 // Check against the `topics` array inside the `content` JSON
                 const qTopicsRaw = (q.content as any)?.topics || [];
                 const qTopicsNormalized = qTopicsRaw.map((qt: string) => normalizeText(qt));
                 const matchesTopicsJson = qTopicsNormalized.some((qt: string) =>
-                    topicsList.some(tl => qt.includes(tl) || tl.includes(qt))
+                    topicsList.some((tl: string) => qt.includes(tl) || tl.includes(qt))
                 );
 
                 return matchesSubareaColumn || matchesTopicsJson;
@@ -149,10 +233,50 @@ export async function getNextAdaptiveQuestion(sessionId: string): Promise<Engine
         }
     }
 
+    // EXPLICIT CONTENT DEDUPLICATION: Remove any question that has the same text as one already asked
+    candidateQuestions = candidateQuestions.filter((q: any) => {
+        const content = (q.content as any);
+        const text = content?.text || content?.html || "";
+        return !askedQuestionTexts.includes(text);
+    });
+
     if (candidateQuestions.length === 0) {
-        // Fallback: Si no hay suficientes preguntas en el nivel, finalizar prematuramente o relajar filtro.
-        // Aquí decidimos finalizar prematuramente por falta de banco.
-        return await finalizeSession(session.id, "Bolsa de reactivos agotada");
+        // Fallback 1: Relajar filtro de subtema y buscar solo por área y nivel
+        candidateQuestions = allMatchingQuestions.filter((q: any) => {
+            const content = (q.content as any);
+            const text = content?.text || content?.html || "";
+            return !askedQuestionTexts.includes(text);
+        });
+
+        if (candidateQuestions.length === 0) {
+            // Fallback 2: Relajar nivel, buscar cualquier pregunta del área que no se haya hecho
+            let fallbackQuestions = [];
+            if (searchArea === "Repaso Espaciado") {
+                const failedAnswers = await prisma.dynamicSessionAnswer.findMany({
+                    where: { dynamicSession: { studentId: session.studentId }, isCorrect: false },
+                    select: { questionId: true }, distinct: ['questionId']
+                });
+                const failedIds = failedAnswers.map((f: any) => f.questionId).filter((id: string) => !askedQuestionIds.includes(id));
+                fallbackQuestions = await prisma.question.findMany({ where: { id: { in: failedIds } } });
+            } else {
+                fallbackQuestions = await prisma.question.findMany({
+                    where: { area: searchArea, id: { notIn: askedQuestionIds } }
+                });
+            }
+
+            // Apply content deduplication to fallback questions too
+            fallbackQuestions = fallbackQuestions.filter((q: any) => {
+                const content = (q.content as any);
+                const text = content?.text || content?.html || "";
+                return !askedQuestionTexts.includes(text);
+            });
+
+            if (fallbackQuestions.length === 0) {
+                // Si de plano ya no hay preguntas, terminamos.
+                return await finalizeSession(session.id, "Bolsa de reactivos agotada");
+            }
+            candidateQuestions = fallbackQuestions;
+        }
     }
 
     // Seleccionar una al azar
@@ -186,19 +310,50 @@ export async function finalizeSession(sessionId: string, reason: string): Promis
 
     const maxScorePerQuestion = 3;
     let obtainedPoints = 0;
-    let expectedPoints = session.answers.length * maxScorePerQuestion;
-
-    if (expectedPoints === 0) {
-        expectedPoints = 1; // Evitar división por cero
-    }
+    let expectedPoints = 0;
 
     session.answers.forEach((ans: any) => {
+        expectedPoints += ans.questionLevel; // El máximo posible para este alumno fue la suma de niveles presentados
         if (ans.isCorrect) {
             obtainedPoints += ans.questionLevel; // Vale más si acierta nivel 3
         }
     });
 
     const calculatedScore = Math.min(100, Math.round((obtainedPoints / expectedPoints) * 100));
+
+    // --- LÓGICA DE GAMIFICACIÓN: RACHA Y BONO XP ---
+    const user = await prisma.user.findUnique({ where: { id: session.studentId } });
+    if (user) {
+        let newStreak = (user as any).currentStreak || 0;
+        let newLastActive = (user as any).lastActiveDate || new Date(0);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const lastActiveStr = newLastActive.toISOString().split('T')[0];
+
+        if (todayStr !== lastActiveStr) {
+            // Check if it was exactly yesterday
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+            if (lastActiveStr === yesterdayStr) {
+                newStreak += 1;
+            } else {
+                newStreak = 1; // Lost streak, reset to 1
+            }
+            newLastActive = new Date();
+        }
+
+        const completionBonusXp = calculatedScore >= 60 ? 50 : 20;
+
+        await prisma.user.update({
+            where: { id: session.studentId },
+            data: {
+                currentStreak: newStreak,
+                lastActiveDate: newLastActive,
+                xp: { increment: completionBonusXp }
+            } as any
+        });
+    }
 
     await prisma.dynamicSession.update({
         where: { id: sessionId },

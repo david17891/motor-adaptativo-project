@@ -2,15 +2,35 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Clock, ChevronRight, Activity } from "lucide-react";
+import { ensureMath } from "@/lib/math";
+import { Clock, ChevronRight, Activity, Lightbulb } from "lucide-react";
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
-export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuestions }: { sessionId: string, evaluationTitle: string, totalQuestions: number }) {
+export default function AdaptiveWizard({
+    sessionId,
+    evaluationTitle,
+    totalQuestions,
+    isPractice = false,
+    durationMinutes,
+    startedAt
+}: {
+    sessionId: string,
+    evaluationTitle: string,
+    totalQuestions: number,
+    isPractice?: boolean,
+    durationMinutes?: number | null,
+    startedAt?: Date
+}) {
     const router = useRouter();
+
 
     const [currentQuestion, setCurrentQuestion] = useState<any>(null);
     const [selectedOption, setSelectedOption] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showHint, setShowHint] = useState(false);
     const [questionStartTime, setQuestionStartTime] = useState<number>(0);
     const [examFinished, setExamFinished] = useState(false);
     const [finishReason, setFinishReason] = useState("");
@@ -20,6 +40,8 @@ export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuesti
     // pero podemos llevar un contador local aproximado (vienen del server).
     // Para simplificar MVP V1, el API nos dice isFinished.
     const [questionsAnsweredLocal, setQuestionsAnsweredLocal] = useState(0);
+    const [timeLeftPercent, setTimeLeftPercent] = useState(100);
+    const [timeLeftString, setTimeLeftString] = useState<string | null>(null);
 
     const fetchNextQuestion = async () => {
         setIsLoading(true);
@@ -48,6 +70,7 @@ export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuesti
             } else {
                 setCurrentQuestion(data.nextQuestion);
                 setSelectedOption(null);
+                setShowHint(false);
                 setQuestionStartTime(Date.now());
                 setIsLoading(false);
             }
@@ -75,7 +98,8 @@ export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuesti
                     sessionId,
                     questionId: currentQuestion.id,
                     selectedOptionId: selectedOption,
-                    timeSpentMs: timeSpent
+                    timeSpentMs: timeSpent,
+                    usedHint: showHint
                 })
             });
 
@@ -89,14 +113,85 @@ export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuesti
             } else {
                 setCurrentQuestion(data.nextQuestion);
                 setSelectedOption(null);
+                setShowHint(false);
                 setQuestionStartTime(Date.now());
-                window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         } catch (error) {
             console.error("Error submitting answer:", error);
             alert("Error de conexión. Inténtalo de nuevo.");
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    // --- LÓGICA DEL TEMPORIZADOR ---
+    useEffect(() => {
+        if (!durationMinutes || !startedAt) return;
+
+        const durationMs = durationMinutes * 60 * 1000;
+        const endTime = new Date(startedAt).getTime() + durationMs;
+
+        const timer = setInterval(() => {
+            const now = new Date().getTime();
+            const diff = endTime - now;
+
+            if (diff <= 0) {
+                clearInterval(timer);
+                setTimeLeftString("00:00");
+                setTimeLeftPercent(0);
+
+                // Finalizar por tiempo agotado
+                handleTimeExpired();
+                return;
+            }
+
+            let minutes = Math.floor(diff / 60000);
+            let seconds = Math.floor((diff % 60000) / 1000);
+
+            // Fix bounds issues with display
+            if (minutes < 0) minutes = 0;
+            if (seconds < 0) seconds = 0;
+
+            const display = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+            setTimeLeftString(display);
+            setTimeLeftPercent(Math.max(0, (diff / durationMs) * 100));
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [durationMinutes, startedAt]);
+
+    const handleTimeExpired = async () => {
+        setIsLoading(true);
+        try {
+            const res = await fetch('/api/adaptive/answer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId,
+                    questionId: currentQuestion?.id || "TIME_EXPIRED",
+                    selectedOptionId: null,
+                    timeSpentMs: 0,
+                    forceFinish: true // Avisar que se acabó el tiempo
+                })
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                console.error("Server returned error on time expire:", data.error);
+                setExamFinished(true);
+                setFinishReason("Error finalizando el tiempo.");
+                setFinalScore(0);
+                return;
+            }
+
+            setExamFinished(true);
+            setFinishReason("Tiempo Agotado");
+            setFinalScore(data.finalScore || 0);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -139,23 +234,48 @@ export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuesti
 
     const questionOptions = currentQuestion.options as any[];
 
+    // Extraer nombre de la materia/área del título para la UI (ej. "Práctica: Español - Lectura" -> "Español")
+    const resolvedArea = evaluationTitle.includes(':')
+        ? evaluationTitle.split(':')[1].split('-')[0].trim()
+        : (currentQuestion.area || "Evaluación");
+
     return (
         <div className="space-y-6">
             {/* Cabecera Adaptativa */}
-            <div className="bg-white dark:bg-zinc-950 border-b-4 border-purple-500 rounded-xl p-4 sm:p-6 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 sticky top-4 z-10">
-                <div>
+            <div className="bg-white dark:bg-zinc-950 border-b-4 border-purple-500 rounded-xl p-4 sm:p-6 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 sticky top-4 z-10 transition-all">
+                <div className="flex-1">
                     <h1 className="text-lg sm:text-xl font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                         {evaluationTitle}
                         <span className="bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300 text-[10px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest hidden sm:inline-block">Adaptativo</span>
                     </h1>
                     <div className="flex items-center gap-4 mt-2 text-sm font-medium text-zinc-500">
-                        <span className="flex items-center gap-1"><Clock size={16} /> En progreso</span>
-                        <span className="flex items-center gap-1"><Activity size={16} className="text-purple-500" /> Motor V1 Activo</span>
+                        <span className="flex items-center gap-1 font-bold text-purple-600 dark:text-purple-400">
+                            <Activity size={16} /> Motor V1
+                        </span>
+                        <span className="flex items-center gap-1"> {resolvedArea} Activo</span>
                     </div>
                 </div>
-                <div className="text-right bg-zinc-50 dark:bg-zinc-900 px-4 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 w-full sm:w-auto">
-                    <span className="block text-xs font-bold text-zinc-400 uppercase tracking-wider">Avance Est.</span>
-                    <span className="text-xl font-black text-zinc-900 dark:text-zinc-100">{questionsAnsweredLocal + 1} <span className="text-sm font-medium text-zinc-400">/ {totalQuestions}</span></span>
+
+                {timeLeftString && (
+                    <div className="flex flex-col items-center sm:items-end gap-1.5 min-w-[140px]">
+                        <div className="flex items-center gap-3 px-4 py-2 bg-orange-50 dark:bg-orange-950/40 border-2 border-orange-200 dark:border-orange-800/50 rounded-2xl shadow-sm">
+                            <span className="text-xs font-black text-orange-600 dark:text-orange-400 uppercase tracking-tighter">Tiempo</span>
+                            <span className="text-2xl font-black font-mono text-orange-700 dark:text-orange-300 leading-none">{timeLeftString}</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                            <div
+                                className={`h-full transition-all duration-1000 ${timeLeftPercent < 20 ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`}
+                                style={{ width: `${timeLeftPercent}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                <div className="text-right bg-zinc-50 dark:bg-zinc-900 px-4 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 w-full sm:w-auto shadow-inner">
+                    <span className="block text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Avance del Motor</span>
+                    <span className="text-xl font-black text-zinc-900 dark:text-zinc-100">
+                        {Math.min(questionsAnsweredLocal + 1, totalQuestions)} <span className="text-sm font-medium text-zinc-400">/ {totalQuestions}</span>
+                    </span>
                 </div>
             </div>
 
@@ -169,8 +289,34 @@ export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuesti
                     </div>
 
                     <div className="prose prose-zinc dark:prose-invert max-w-none prose-lg">
-                        <div dangerouslySetInnerHTML={{ __html: currentQuestion.content?.html || currentQuestion.content?.text || "Sin contenido visualizable." }} />
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                            {ensureMath(currentQuestion.content?.text || currentQuestion.content?.html || "Sin contenido visualizable.")}
+                        </ReactMarkdown>
                     </div>
+
+                    {/* Hint Section (Only for Practice) */}
+                    {isPractice && currentQuestion.hint && (
+                        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+                            {!showHint ? (
+                                <button
+                                    onClick={() => setShowHint(true)}
+                                    className="flex items-center gap-2 text-sm font-bold text-yellow-600 dark:text-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-2 rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-900/40 transition-colors"
+                                >
+                                    <Lightbulb size={18} />
+                                    Usar Pista Opcional (-5 XP)
+                                </button>
+                            ) : (
+                                <div className="bg-yellow-50 dark:bg-yellow-900/10 border-l-4 border-yellow-500 p-4 rounded-r-lg">
+                                    <h4 className="flex items-center gap-2 text-sm font-bold text-yellow-800 dark:text-yellow-400 mb-2">
+                                        <Lightbulb size={18} /> Pista Revelada (XP Reducida)
+                                    </h4>
+                                    <p className="text-zinc-700 dark:text-zinc-300 text-sm">
+                                        {currentQuestion.hint}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Opciones */}
@@ -198,8 +344,12 @@ export default function AdaptiveWizard({ sessionId, evaluationTitle, totalQuesti
                                     />
                                 </div>
                                 <div className="ml-3 flex-1 flex">
-                                    <span className="font-bold text-zinc-400 mr-2 w-4">{String.fromCharCode(65 + optIndex)}.</span>
-                                    <span className="text-zinc-700 dark:text-zinc-300" dangerouslySetInnerHTML={{ __html: opt.text }} />
+                                    <span className="font-bold text-zinc-400 mr-2 w-4 shrink-0">{String.fromCharCode(65 + optIndex)}.</span>
+                                    <div className="text-zinc-700 dark:text-zinc-300">
+                                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                            {ensureMath(opt.text)}
+                                        </ReactMarkdown>
+                                    </div>
                                 </div>
                             </label>
                         ))}

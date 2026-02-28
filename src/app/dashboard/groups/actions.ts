@@ -40,14 +40,22 @@ async function ensureDbUser() {
 
 export async function createGroup(formData: FormData) {
     const name = formData.get("name") as string;
-    if (!name) return { error: "El nombre del grupo es requerido." };
+    const durationWeeks = parseInt(formData.get("durationWeeks") as string) || 4;
+    const startDateForm = formData.get("startDate") as string;
+
+    if (!name || !startDateForm) return { error: "Faltan datos requeridos." };
 
     try {
         const { dbUser, tenant } = await ensureDbUser();
 
+        // Convert YYYY-MM-DD to a reliable Date object ending in T00:00:00
+        const startDate = new Date(`${startDateForm}T00:00:00`);
+
         await prisma.group.create({
             data: {
                 name,
+                durationWeeks,
+                startDate,
                 profesorId: dbUser.id,
                 tenantId: tenant.id,
             },

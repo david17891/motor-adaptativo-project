@@ -28,6 +28,8 @@ export async function addEvaluationToGroup(formData: FormData) {
     const startDateForm = formData.get("startDate") as string;
     const endDateForm = formData.get("endDate") as string;
 
+    const durationMinutes = formData.get("durationMinutes") ? parseInt(formData.get("durationMinutes") as string) : null;
+
     if (!groupId || !examVersionId || !startDateForm || !endDateForm) {
         return { error: "Faltan datos requeridos." };
     }
@@ -39,6 +41,7 @@ export async function addEvaluationToGroup(formData: FormData) {
                 examVersionId,
                 startDate: new Date(startDateForm),
                 endDate: new Date(endDateForm),
+                durationMinutes,
                 status: "PUBLISHED"
             }
         });
@@ -94,8 +97,10 @@ export async function addAdaptiveEvaluationToGroup(formData: FormData) {
     const startDateForm = formData.get("startDate") as string;
     const endDateForm = formData.get("endDate") as string;
 
+    const durationMinutes = formData.get("durationMinutes") ? parseInt(formData.get("durationMinutes") as string) : null;
+
     if (!groupId || !title || !targetArea || !startDateForm || !endDateForm) {
-        throw new Error("Faltan datos requeridos.");
+        return { error: "Faltan datos requeridos." };
     }
 
     try {
@@ -106,15 +111,47 @@ export async function addAdaptiveEvaluationToGroup(formData: FormData) {
                 targetArea,
                 targetSubarea: targetSubareaStr,
                 totalQuestions,
-                startDate: new Date(startDateForm),
-                endDate: new Date(endDateForm),
+                // Append time to prevent local timezone shifting issues with YYYY-MM-DD
+                startDate: new Date(`${startDateForm}T00:00:00`),
+                endDate: new Date(`${endDateForm}T23:59:59`),
+                durationMinutes,
                 status: "PUBLISHED"
             }
         });
+
+        // Use revalidate path inside try block before redirecting
+        revalidatePath(`/dashboard/groups/${groupId}`);
+
     } catch (error) {
         console.error("Error creating adaptive evaluation:", error);
         throw new Error("Error interno al programar la evaluación adaptativa.");
     }
 
     redirect(`/dashboard/groups/${groupId}`);
+}
+
+export async function deleteAdaptiveEvaluation(evaluationId: string, groupId: string) {
+    try {
+        await prisma.adaptiveEvaluation.delete({
+            where: { id: evaluationId }
+        });
+        revalidatePath(`/dashboard/groups/${groupId}`);
+        return { success: true };
+    } catch (error) {
+        console.error("Error deleting adaptive evaluation:", error);
+        return { error: "No se pudo eliminar la evaluación adaptativa." };
+    }
+}
+
+export async function deleteStandardEvaluation(evaluationId: string, groupId: string) {
+    try {
+        await prisma.evaluation.delete({
+            where: { id: evaluationId }
+        });
+        revalidatePath(`/dashboard/groups/${groupId}`);
+        return { success: true };
+    } catch (error) {
+        console.error("Error deleting standard evaluation:", error);
+        return { error: "No se pudo eliminar la evaluación." };
+    }
 }

@@ -22,7 +22,7 @@ export default async function EvaluationRoomPage(props: { params: Promise<{ id: 
     }
 
     // Buscar la evaluación específica y validar que pertenece a un grupo del alumno
-    const groupIds = currentUser.groupMemberships.map((g: any) => g.groupId);
+    const groupIds = currentUser.groupMemberships.map((g) => g.groupId);
 
     const evaluation = await prisma.evaluation.findFirst({
         where: {
@@ -83,12 +83,15 @@ export default async function EvaluationRoomPage(props: { params: Promise<{ id: 
                 evaluationId: evaluation.id,
                 studentId: currentUser.id,
                 startedAt: new Date()
+            },
+            include: {
+                answers: true
             }
         });
     }
 
     // Mapear la estructura de Data para el Front End
-    const questionsForWizard = evaluation.examVersion.questions.map((eq: any) => {
+    const questionsForWizard = evaluation.examVersion.questions.map((eq) => {
         const q = eq.question;
         const contentObj = (typeof q.content === 'object' && q.content !== null) ? q.content : { text: JSON.stringify(q.content) };
 
@@ -96,14 +99,14 @@ export default async function EvaluationRoomPage(props: { params: Promise<{ id: 
             id: q.id,
             area: q.area,
             subarea: q.subarea,
-            content: { text: contentObj.text },
+            content: { text: (contentObj as any).text },
             options: q.options as any[]
         };
     });
 
     const initialAnswers: Record<string, string> = {};
-    if (result.answers) {
-        result.answers.forEach((ans: any) => {
+    if (result && result.answers) {
+        result.answers.forEach((ans) => {
             if (ans.selectedOptionId) {
                 initialAnswers[ans.questionId] = ans.selectedOptionId;
             }
@@ -112,10 +115,12 @@ export default async function EvaluationRoomPage(props: { params: Promise<{ id: 
 
     return (
         <ExamWizard
-            resultId={result.id}
+            resultId={result?.id as string}
             title={evaluation.examVersion.title}
             questions={questionsForWizard}
             initialAnswers={initialAnswers}
+            durationMinutes={(evaluation as any).durationMinutes}
+            startedAt={result?.startedAt}
         />
     );
 }

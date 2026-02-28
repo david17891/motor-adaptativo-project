@@ -6,26 +6,6 @@ datasource db {
   provider = "postgresql"
 }
 
-// -----------------------------------------------------------------------------
-// ENUMS
-// -----------------------------------------------------------------------------
-
-enum UserRole {
-  SUPER_ADMIN
-  PROFESOR
-  ALUMNO
-}
-
-enum EvaluationStatus {
-  DRAFT
-  PUBLISHED
-  CLOSED
-}
-
-// -----------------------------------------------------------------------------
-// MODELS
-// -----------------------------------------------------------------------------
-
 /// Tenants represent schools or institutions
 model Tenant {
   id        String   @id @default(uuid())
@@ -33,53 +13,53 @@ model Tenant {
   slug      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  users  User[]
-  groups Group[]
+  groups    Group[]
+  users     User[]
 
   @@map("tenants")
 }
 
 /// Global Users, associated with a Tenant (except potentially Super Admins)
 model User {
-  id           String   @id @default(uuid())
-  tenantId     String?
-  role         UserRole @default(ALUMNO)
-  email        String   @unique
-  passwordHash String
-  nombre       String
-  apellidos    String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  
-  // As a Professor
-  groupsTaught Group[] @relation("ProfessorGroups")
-  
-  // As a Student
-  groupMemberships GroupMember[]
-  results          Result[]
+  id               String           @id @default(uuid())
+  tenantId         String?
+  role             UserRole         @default(ALUMNO)
+  email            String           @unique
+  passwordHash     String
+  nombre           String
+  apellidos        String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  currentStreak    Int              @default(0)
+  lastActiveDate   DateTime?
+  level            Int              @default(1)
+  xp               Int              @default(0)
   dynamicSessions  DynamicSession[]
+  groupMemberships GroupMember[]
+  groupsTaught     Group[]          @relation("ProfessorGroups")
+  results          Result[]
+  payments         Payment[]
+  tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("users")
 }
 
 /// Groups within a Tenant, managed by a Professor
 model Group {
-  id         String   @id @default(uuid())
-  tenantId   String
-  profesorId String
-  name       String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  profesor User   @relation("ProfessorGroups", fields: [profesorId], references: [id], onDelete: Cascade)
-  
-  members             GroupMember[]
-  evaluations         Evaluation[]
+  id                  String               @id @default(uuid())
+  tenantId            String
+  profesorId          String
+  name                String
+  durationWeeks       Int                  @default(4) // Duración del curso en semanas
+  startDate           DateTime             @default(now()) // Fecha de inicio de clases
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
   adaptiveEvaluations AdaptiveEvaluation[]
+  evaluations         Evaluation[]
+  members             GroupMember[]
+  payments            Payment[]
+  profesor            User                 @relation("ProfessorGroups", fields: [profesorId], references: [id], onDelete: Cascade)
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([profesorId])
@@ -92,56 +72,68 @@ model GroupMember {
   groupId   String
   studentId String
   joinedAt  DateTime @default(now())
-
-  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  student User  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, studentId])
   @@map("group_members")
 }
 
+/// Registro de Pagos Semanales
+model Payment {
+  id        String   @id @default(uuid())
+  groupId   String
+  studentId String
+  week      Int      // Número de la semana pagada
+  paidAt    DateTime @default(now())
+
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, studentId, week])
+  @@map("payments")
+}
+
 /// Global Question Bank
 model Question {
-  id              String   @id @default(uuid())
-  area            String   // e.g., "Matemáticas", "Lectura"
-  subarea         String?  // e.g., "Álgebra", "Geometría"
-  content         Json     // Rich text, LaTeX, images
-  options         Json     // Array of { id, text, is_correct }
-  difficultyLevel Int      @default(1)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
+  id                    String                 @id @default(uuid())
+  area                  String
+  content               Json
+  options               Json
+  difficultyLevel       Int                    @default(1)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  subarea               String?
+  hint                  String?
+  dynamicSessionAnswers DynamicSessionAnswer[]
   examQuestions         ExamQuestion[]
   resultAnswers         ResultAnswer[]
-  dynamicSessionAnswers DynamicSessionAnswer[]
 
   @@map("questions")
 }
 
 /// 10 Static Exam Versions
 model ExamVersion {
-  id          String   @id @default(uuid())
-  versionCode String   @unique // e.g., "V1", "V2"
+  id          String         @id @default(uuid())
+  versionCode String         @unique
   title       String
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  questions   ExamQuestion[]
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
   evaluations Evaluation[]
+  questions   ExamQuestion[]
 
   @@map("exam_versions")
 }
 
 /// Join table ExamVersion -> Questions to maintain exact order
 model ExamQuestion {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   examVersionId String
   questionId    String
   orderIndex    Int
-
-  examVersion ExamVersion @relation(fields: [examVersionId], references: [id], onDelete: Cascade)
-  question    Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  examVersion   ExamVersion @relation(fields: [examVersionId], references: [id], onDelete: Cascade)
+  question      Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@unique([examVersionId, questionId])
   @@unique([examVersionId, orderIndex])
@@ -150,18 +142,18 @@ model ExamQuestion {
 
 /// Assignment of an ExamVersion to a Group
 model Evaluation {
-  id            String           @id @default(uuid())
-  groupId       String
-  examVersionId String
-  startDate     DateTime
-  endDate       DateTime
-  status        EvaluationStatus @default(DRAFT)
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-
-  group       Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  examVersion ExamVersion @relation(fields: [examVersionId], references: [id], onDelete: Cascade)
-  results     Result[]
+  id              String           @id @default(uuid())
+  groupId         String
+  examVersionId   String
+  startDate       DateTime
+  endDate         DateTime
+  status          EvaluationStatus @default(DRAFT)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  durationMinutes Int?
+  examVersion     ExamVersion      @relation(fields: [examVersionId], references: [id], onDelete: Cascade)
+  group           Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  results         Result[]
 
   @@index([groupId])
   @@map("evaluations")
@@ -169,17 +161,15 @@ model Evaluation {
 
 /// A Student's Result for an Evaluation
 model Result {
-  id           String    @id @default(uuid())
+  id           String         @id @default(uuid())
   evaluationId String
   studentId    String
   score        Float?
-  startedAt    DateTime  @default(now())
+  startedAt    DateTime       @default(now())
   completedAt  DateTime?
-
-  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
-  student    User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  
-  answers ResultAnswer[]
+  answers      ResultAnswer[]
+  evaluation   Evaluation     @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  student      User           @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([evaluationId, studentId])
   @@map("results")
@@ -187,37 +177,60 @@ model Result {
 
 /// Analytics per question for a Result
 model ResultAnswer {
-  id               String  @id @default(uuid())
+  id               String   @id @default(uuid())
   resultId         String
   questionId       String
-  selectedOptionId String? // the ID of the chosen option from the Question's options JSON
-  isCorrect        Boolean @default(false)
-
-  result   Result   @relation(fields: [resultId], references: [id], onDelete: Cascade)
-  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  selectedOptionId String?
+  isCorrect        Boolean  @default(false)
+  question         Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  result           Result   @relation(fields: [resultId], references: [id], onDelete: Cascade)
 
   @@unique([resultId, questionId])
   @@map("result_answers")
 }
 
-// -----------------------------------------------------------------------------
-// ADAPTIVE ENGINE MODELS (FASE 4)
-// -----------------------------------------------------------------------------
+/// Catálogo Maestro de Áreas de Conocimiento (ej. Matemáticas, Ciencias)
+model SubjectArea {
+  id          String         @id @default(uuid())
+  name        String         @unique
+  description String?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  topics      SubjectTopic[]
+
+  @@map("subject_areas")
+}
+
+/// Catálogo Maestro de Subtemas (ej. Álgebra, Geometría)
+model SubjectTopic {
+  id          String      @id @default(uuid())
+  areaId      String
+  name        String
+  description String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  area        SubjectArea @relation(fields: [areaId], references: [id], onDelete: Cascade)
+
+  @@unique([areaId, name])
+  @@map("subject_topics")
+}
 
 /// Configuración de una Evaluación Dinámica (Adaptativa) para un Grupo
 model AdaptiveEvaluation {
   id              String           @id @default(uuid())
   groupId         String
   title           String
-  targetArea      String           // e.g. "Matemáticas"
-  targetSubarea   String?          // e.g. "Álgebra" (opcional)
-  totalQuestions  Int              @default(10) // Cuántas preguntas hacer antes de terminar
+  targetArea      String
+  targetSubarea   String?
+  totalQuestions  Int              @default(10)
   startDate       DateTime
   endDate         DateTime
   status          EvaluationStatus @default(DRAFT)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
-
+  durationMinutes Int?
   group           Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
   dynamicSessions DynamicSession[]
 
@@ -227,20 +240,22 @@ model AdaptiveEvaluation {
 
 /// Representa el intento (sesión) de un estudiante en una Evaluación Adaptativa
 model DynamicSession {
-  id                   String             @id @default(uuid())
-  adaptiveEvaluationId String
+  id                   String                 @id @default(uuid())
+  adaptiveEvaluationId String?
   studentId            String
-  estimatedScore       Float?             // Calificación final calculada por el algoritmo
-  currentLevel         Int                @default(2) // 1 = Fácil, 2 = Medio, 3 = Difícil. Inicia en Medio.
-  status               String             @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED
-  startedAt            DateTime           @default(now())
+  estimatedScore       Float?
+  currentLevel         Int                    @default(2)
+  status               String                 @default("IN_PROGRESS")
+  startedAt            DateTime               @default(now())
   completedAt          DateTime?
+  practiceArea         String?
+  practiceSubarea      String?
+  durationMinutes      Int?
+  totalQuestions       Int                    @default(10)
+  answers              DynamicSessionAnswer[]
+  adaptiveEvaluation   AdaptiveEvaluation?    @relation(fields: [adaptiveEvaluationId], references: [id], onDelete: Cascade)
+  student              User                   @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  adaptiveEvaluation AdaptiveEvaluation   @relation(fields: [adaptiveEvaluationId], references: [id], onDelete: Cascade)
-  student            User                 @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  answers            DynamicSessionAnswer[]
-
-  @@unique([adaptiveEvaluationId, studentId])
   @@index([studentId])
   @@map("dynamic_sessions")
 }
@@ -250,17 +265,28 @@ model DynamicSessionAnswer {
   id               String         @id @default(uuid())
   dynamicSessionId String
   questionId       String
-  orderIndex       Int            // 1, 2, 3... el orden en que se le presentó
+  orderIndex       Int
   presentedAt      DateTime       @default(now())
   answeredAt       DateTime?
-  selectedOptionId String?        // nulo si se le acabó el tiempo o la saltó
+  selectedOptionId String?
   isCorrect        Boolean        @default(false)
-  questionLevel    Int            // El nivel de dificultad que tenía la pregunta cuando se le mostró
-  
+  questionLevel    Int
   dynamicSession   DynamicSession @relation(fields: [dynamicSessionId], references: [id], onDelete: Cascade)
   question         Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
-  @@unique([dynamicSessionId, questionId]) // Una sesión no le puede repetir la misma pregunta
-  @@unique([dynamicSessionId, orderIndex]) // El índice en la línea de tiempo debe ser único por sesión
+  @@unique([dynamicSessionId, questionId])
+  @@unique([dynamicSessionId, orderIndex])
   @@map("dynamic_session_answers")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  PROFESOR
+  ALUMNO
+}
+
+enum EvaluationStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
 }

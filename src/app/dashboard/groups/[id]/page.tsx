@@ -1,8 +1,11 @@
 import prisma from "@/lib/prisma";
 import Link from "next/link";
-import { removeStudentFromGroup, addEvaluationToGroup, addStudentToGroupQuickly } from "./actions";
-import { ArrowLeft, BookOpen, AlertCircle, UserPlus } from "lucide-react";
+import { removeStudentFromGroup, addStudentToGroupQuickly, deleteAdaptiveEvaluation, deleteStandardEvaluation } from "./actions";
+import AssignEvaluationForm from "./AssignEvaluationForm";
+import { ArrowLeft, BookOpen, AlertCircle, UserPlus, Target, ChevronRight, Trash2 } from "lucide-react";
 import { redirect } from "next/navigation";
+import GroupHeatmap from "./GroupHeatmap";
+import GroupStatsContainer from "./GroupStatsContainer";
 
 export default async function GroupDetailsPage({ params }: { params: Promise<{ id: string }> }) {
     const { id: groupId } = await params;
@@ -38,6 +41,11 @@ export default async function GroupDetailsPage({ params }: { params: Promise<{ i
 
     const availableExams = await prisma.examVersion.findMany({
         where: { isActive: true },
+        include: {
+            _count: {
+                select: { questions: true }
+            }
+        },
         orderBy: { createdAt: "desc" }
     });
 
@@ -46,6 +54,17 @@ export default async function GroupDetailsPage({ params }: { params: Promise<{ i
     const nextWeek = new Date();
     nextWeek.setDate(nextWeek.getDate() + 7);
     const nextWeekFormatted = nextWeek.toISOString().split("T")[0];
+
+    // Calcular semana actual
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - group.startDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    let currentWeek = Math.ceil(diffDays / 7);
+    if (currentWeek < 1) currentWeek = 1;
+    if (currentWeek > group.durationWeeks) currentWeek = group.durationWeeks;
+
+    // Formatear estudiantes para el componente
+    const studentsData = group.members.map(m => m.student);
 
     return (
         <div className="space-y-6">
@@ -77,7 +96,7 @@ export default async function GroupDetailsPage({ params }: { params: Promise<{ i
                             <form action={async (formData) => {
                                 "use server";
                                 await addStudentToGroupQuickly(formData);
-                            }} className="flex items-center gap-2">
+                            }} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                                 <input type="hidden" name="groupId" value={group.id} />
                                 <input
                                     type="email"
@@ -86,49 +105,68 @@ export default async function GroupDetailsPage({ params }: { params: Promise<{ i
                                     placeholder="Añadir por correo (ej. alumno@mail.com)"
                                     className="flex-1 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white dark:bg-zinc-900"
                                 />
-                                <button type="submit" className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg flex items-center gap-1 transition-colors">
+                                <button type="submit" className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg flex items-center justify-center gap-1 transition-colors">
                                     <UserPlus size={16} /> Añadir
                                 </button>
                             </form>
                         </div>
 
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 font-medium border-b border-zinc-200 dark:border-zinc-800">
-                                <tr>
-                                    <th className="px-6 py-3">Alumno</th>
-                                    <th className="px-6 py-3">Correo</th>
-                                    <th className="px-6 py-3 text-right">Acción</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {group.members.length === 0 ? (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left min-w-[500px] sm:min-w-0">
+                                <thead className="bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 font-medium border-b border-zinc-200 dark:border-zinc-800">
                                     <tr>
-                                        <td colSpan={3} className="px-6 py-8 text-center text-zinc-500">
-                                            Vacio.  Usa el menú principal de "Alumnos" para matricular estudiantes a este grupo masivamente.
-                                        </td>
+                                        <th className="px-4 sm:px-6 py-3">Alumno</th>
+                                        <th className="px-6 py-3 hidden sm:table-cell">Correo</th>
+                                        <th className="px-4 sm:px-6 py-3 text-right">Acción</th>
                                     </tr>
-                                ) : (
-                                    group.members.map((member: any) => (
-                                        <tr key={member.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition-colors border-b border-zinc-100 dark:border-zinc-800/50 last:border-0">
-                                            <td className="px-6 py-4 font-medium text-zinc-900 dark:text-zinc-100">
-                                                {member.student.apellidos}, {member.student.nombre}
-                                            </td>
-                                            <td className="px-6 py-4 text-zinc-500">
-                                                {member.student.email}
-                                            </td>
-                                            <td className="px-6 py-4 text-right">
-                                                <form action={async () => {
-                                                    "use server";
-                                                    await removeStudentFromGroup(group.id, member.student.id);
-                                                }}>
-                                                    <button type="submit" className="text-red-500 hover:text-red-700 text-xs font-semibold uppercase">Remover</button>
-                                                </form>
+                                </thead>
+                                <tbody>
+                                    {group.members.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={3} className="px-6 py-8 text-center text-zinc-500">
+                                                Vacio. Usa el menú principal de "Alumnos" para matricular estudiantes a este grupo masivamente.
                                             </td>
                                         </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
+                                    ) : (
+                                        group.members.map((member: any) => (
+                                            <tr key={member.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition-colors border-b border-zinc-100 dark:border-zinc-800/50 last:border-0">
+                                                <td className="px-4 sm:px-6 py-4">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="min-w-0">
+                                                            <Link
+                                                                href={`/dashboard/students/${member.student.id}`}
+                                                                className="font-bold text-zinc-900 dark:text-zinc-100 hover:text-purple-600 dark:hover:text-purple-400 transition-colors block truncate max-w-[150px] sm:max-w-none"
+                                                            >
+                                                                {member.student.nombre} {member.student.apellidos}
+                                                            </Link>
+                                                            <div className="text-xs text-zinc-500 mt-0.5 truncate max-w-[150px] sm:max-w-none sm:hidden">{member.student.email}</div>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0 ml-2">
+                                                            <div className="text-right">
+                                                                <div className="text-[10px] sm:text-sm font-bold text-zinc-700 dark:text-zinc-300">Niv. {member.student.level}</div>
+                                                                <div className="hidden xs:block text-[10px] text-amber-600 dark:text-amber-500 font-medium whitespace-nowrap">🔥 {member.student.currentStreak || 0}</div>
+                                                            </div>
+                                                            <Link href={`/dashboard/students/${member.student.id}`} className="p-1 sm:p-2 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-purple-100 dark:hover:bg-purple-900/30 text-zinc-400 hover:text-purple-600 dark:hover:text-purple-400 transition">
+                                                                <ChevronRight size={16} />
+                                                            </Link>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 text-zinc-500 hidden sm:table-cell">{member.student.email}</td>
+                                                <td className="px-4 sm:px-6 py-4 text-right">
+                                                    <form action={async () => {
+                                                        "use server";
+                                                        await removeStudentFromGroup(group.id, member.student.id);
+                                                    }}>
+                                                        <button type="submit" className="text-red-500 hover:text-red-700 text-[10px] sm:text-xs font-semibold uppercase whitespace-nowrap">Remover</button>
+                                                    </form>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
                     {/* Evaluaciones Adaptativas (Nuevas) */}
@@ -179,6 +217,18 @@ export default async function GroupDetailsPage({ params }: { params: Promise<{ i
                                                     <Link href={`/dashboard/adaptive-evaluations/${evalRecord.id}`} className="text-sm border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
                                                         Reporte
                                                     </Link>
+                                                    <form action={async () => {
+                                                        "use server";
+                                                        await deleteAdaptiveEvaluation(evalRecord.id, group.id);
+                                                    }}>
+                                                        <button
+                                                            type="submit"
+                                                            className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors"
+                                                            title="Eliminar evaluación adaptativa"
+                                                        >
+                                                            <Trash2 size={18} />
+                                                        </button>
+                                                    </form>
                                                 </div>
                                             </li>
                                         );
@@ -189,44 +239,23 @@ export default async function GroupDetailsPage({ params }: { params: Promise<{ i
                     </div>
                 </div>
 
-                {/* Columna Derecha: Exámenes Asignados / Programación */}
-                <div className="space-y-4">
+                {/* Columna Derecha: Mapa de Calor y Exámenes */}
+                <div className="space-y-6">
+                    {/* Diagnóstico Grupal */}
+                    <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+                        <GroupHeatmap groupId={group.id} />
+                    </div>
+
                     <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                         Evaluaciones
                     </h2>
 
-                    <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 shadow-sm space-y-4">
-                        <h3 className="font-semibold text-zinc-800 dark:text-zinc-200">Asignar Examen</h3>
-                        <form action={async (formData: FormData) => {
-                            "use server";
-                            await addEvaluationToGroup(formData);
-                        }} className="space-y-3"
-                        >
-                            <input type="hidden" name="groupId" value={group.id} />
-
-                            <div className="space-y-1">
-                                <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Versión de Examen (Plantilla)</label>
-                                <select name="examVersionId" required className="w-full px-3 py-2 text-sm border rounded-lg bg-zinc-50 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800">
-                                    <option value="">-- Selecciona Examen --</option>
-                                    {availableExams.map((ex: any) => (
-                                        <option key={ex.id} value={ex.id}>{ex.title} ({ex.versionCode})</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="space-y-1">
-                                <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Fecha de Inicio y Cierre (Disponibilidad)</label>
-                                <div className="flex gap-2">
-                                    <input type="date" name="startDate" defaultValue={today} required className="w-1/2 px-2 py-1.5 text-xs border rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800" />
-                                    <input type="date" name="endDate" defaultValue={nextWeekFormatted} required className="w-1/2 px-2 py-1.5 text-xs border rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-800" />
-                                </div>
-                            </div>
-
-                            <button type="submit" className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-lg transition-colors">
-                                Publicar Tarea/Examen
-                            </button>
-                        </form>
-                    </div>
+                    <AssignEvaluationForm
+                        groupId={group.id}
+                        availableExams={availableExams}
+                        today={today}
+                        nextWeekFormatted={nextWeekFormatted}
+                    />
 
                     <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-1 shadow-sm">
                         {group.evaluations.length === 0 ? (
@@ -243,15 +272,30 @@ export default async function GroupDetailsPage({ params }: { params: Promise<{ i
                                             {ev._count.results} Entregas
                                         </span>
                                     </div>
-                                    <Link href={`/dashboard/evaluations/${ev.id}`} className="block w-full text-center py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-900 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-md text-xs font-bold transition-colors">
-                                        Ver Reporte Completo
-                                    </Link>
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <Link href={`/dashboard/evaluations/${ev.id}`} className="flex-1 block text-center py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-900 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-md text-xs font-bold transition-colors">
+                                            Ver Reporte Completo
+                                        </Link>
+                                        <form action={async () => {
+                                            "use server";
+                                            await deleteStandardEvaluation(ev.id, group.id);
+                                        }}>
+                                            <button
+                                                type="submit"
+                                                className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-md transition-colors"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </form>
+                                    </div>
                                 </div>
                             ))
                         )}
                     </div>
                 </div>
             </div>
+
+            <GroupStatsContainer groupId={group.id} groupName={group.name} />
         </div>
     );
 }

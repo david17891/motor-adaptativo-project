@@ -14,6 +14,16 @@ export default async function NewAdaptiveEvaluationPage({ params }: { params: Pr
 
     if (!group) redirect("/dashboard/groups");
 
+    const curriculumAreas = await prisma.subjectArea.findMany({
+        where: { isActive: true },
+        include: { topics: true },
+        orderBy: { name: 'asc' }
+    });
+
+    const uniqueAreas = curriculumAreas.map(a => a.name);
+
+    // Mantenemos la lógica de descubrir subtemas "específicos" (como "Semana 1") 
+    // extrayéndolos de las preguntas existentes + el nuevo catálogo
     const allQuestions = await prisma.question.findMany({
         select: {
             area: true,
@@ -22,31 +32,20 @@ export default async function NewAdaptiveEvaluationPage({ params }: { params: Pr
         }
     });
 
-    const areasMap = new Map<string, number>();
     const topicsSet = new Set<string>();
 
-    allQuestions.forEach((q: any) => {
-        if (q.area) {
-            areasMap.set(q.area, (areasMap.get(q.area) || 0) + 1);
-        }
+    // Añadir temas del catálogo base
+    curriculumAreas.forEach(a => {
+        a.topics.forEach(t => topicsSet.add(t.name.trim().replace(/\s+/g, ' ')));
+    });
 
-        const normalize = (text: string) => text.trim().replace(/\s+/g, ' ');
-
-        if (q.subarea) {
-            topicsSet.add(normalize(q.subarea));
-        }
-
-        const qContent = q.content as any;
-        if (qContent && Array.isArray(qContent.topics)) {
-            qContent.topics.forEach((t: string) => {
-                if (typeof t === 'string' && t.trim()) {
-                    topicsSet.add(normalize(t));
-                }
-            });
+    // Añadir temas de las preguntas existentes
+    allQuestions.forEach(q => {
+        if (q.subarea && q.subarea.trim()) {
+            topicsSet.add(q.subarea.trim().replace(/\s+/g, ' '));
         }
     });
 
-    const uniqueAreas = Array.from(areasMap.keys()).sort();
     const availableTopics = Array.from(topicsSet).sort((a, b) => a.localeCompare(b));
 
     const today = new Date().toISOString().split("T")[0];

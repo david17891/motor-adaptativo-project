@@ -45,7 +45,7 @@ export default async function ResultPage(props: { params: Promise<{ id: string }
 
     const exam = result.evaluation.examVersion;
     const totalQuestions = exam.questions.length;
-    const correctAnswers = result.answers.filter((a: any) => a.isCorrect).length;
+    const correctAnswers = result.answers.filter((a) => a.isCorrect).length;
     const isPassed = (result.score || 0) >= 60; // 60% aprobatorio
 
     // Duración
@@ -124,8 +124,8 @@ export default async function ResultPage(props: { params: Promise<{ id: string }
                         <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-6">Desglose de Reactivos</h3>
 
                         <div className="space-y-4">
-                            {exam.questions.map((eq: any, idx: number) => {
-                                const answerRecord = result.answers.find((a: any) => a.questionId === eq.questionId);
+                            {exam.questions.map((eq, idx: number) => {
+                                const answerRecord = result.answers.find((a) => a.questionId === eq.questionId);
                                 const isCorrect = answerRecord?.isCorrect;
 
                                 return (
@@ -144,9 +144,9 @@ export default async function ResultPage(props: { params: Promise<{ id: string }
                                                     <span className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase">
                                                         {eq.question.area}
                                                     </span>
-                                                    {(eq.question as any).subarea && (
+                                                    {eq.question.subarea && (
                                                         <span className="bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                                                            {(eq.question as any).subarea}
+                                                            {eq.question.subarea}
                                                         </span>
                                                     )}
                                                 </div>

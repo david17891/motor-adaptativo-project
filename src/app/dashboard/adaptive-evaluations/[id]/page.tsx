@@ -2,8 +2,8 @@ import prisma from "@/lib/prisma";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Users, Activity, Target } from "lucide-react";
-import { formatDistanceStrict } from "date-fns";
 import { es } from "date-fns/locale";
+import LiveAdaptiveTable from "./LiveAdaptiveTable";
 
 export default async function AdaptiveEvaluationReportPage({ params }: { params: Promise<{ id: string }> }) {
     const { id: evaluationId } = await params;
@@ -140,80 +140,13 @@ export default async function AdaptiveEvaluationReportPage({ params }: { params:
                         <Users size={18} className="text-purple-500" /> Detalle por Estudiante
                     </h2>
                 </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
-                        <thead className="bg-zinc-50 dark:bg-zinc-900/50 text-zinc-600 dark:text-zinc-400 font-medium border-b border-zinc-200 dark:border-zinc-800">
-                            <tr>
-                                <th className="px-6 py-3">Alumno</th>
-                                <th className="px-6 py-3">Estatus</th>
-                                <th className="px-6 py-3 text-center">Nivel Final</th>
-                                <th className="px-6 py-3 text-center">Puntaje Motor</th>
-                                <th className="px-6 py-3 text-right">Reactivos Vistos</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {members.map((member: any) => {
-                                const session = sessions.find((s: any) => s.studentId === member.student.id);
-                                const hasStarted = !!session;
-                                const isCompleted = session?.status === "COMPLETED";
-
-                                return (
-                                    <tr key={member.id} className="border-b border-zinc-100 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/20 transition-colors">
-                                        <td className="px-6 py-4">
-                                            <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                                                {member.student.apellidos}, {member.student.nombre}
-                                            </div>
-                                            <div className="text-xs text-zinc-500">{member.student.email}</div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            {isCompleted ? (
-                                                <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded text-xs font-semibold">
-                                                    Finalizada
-                                                </span>
-                                            ) : hasStarted ? (
-                                                <span className="inline-flex items-center gap-1 text-orange-600 dark:text-orange-500 bg-orange-50 dark:bg-orange-900/20 px-2 py-0.5 rounded text-xs font-semibold">
-                                                    En Progreso
-                                                </span>
-                                            ) : isExpired ? (
-                                                <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded text-xs font-semibold">
-                                                    No Presentó
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center gap-1 text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded text-xs font-semibold">
-                                                    Pendiente
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            {isCompleted ? (
-                                                <span className={`px-3 py-1 rounded-full text-xs font-bold border ${session.currentLevel >= 3 ? "bg-green-50 border-green-200 text-green-700" :
-                                                    session.currentLevel === 2 ? "bg-yellow-50 border-yellow-200 text-yellow-700" :
-                                                        "bg-red-50 border-red-200 text-red-700"
-                                                    }`}>
-                                                    Nivel {session.currentLevel}
-                                                </span>
-                                            ) : (
-                                                <span className="text-zinc-400">—</span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            {isCompleted ? (
-                                                <span className="font-bold text-zinc-900 dark:text-zinc-100">
-                                                    {Math.round(session.estimatedScore || 0)}
-                                                </span>
-                                            ) : (
-                                                <span className="text-zinc-400">—</span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-right text-zinc-600 dark:text-zinc-400 font-medium">
-                                            {hasStarted ? `${session.answers.length} / ${evaluation.totalQuestions}` : '—'}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
+                <LiveAdaptiveTable
+                    evaluationId={evaluationId}
+                    initialSessions={sessions}
+                    members={members}
+                    totalQuestions={evaluation.totalQuestions}
+                    isActive={isActive}
+                />
             </div>
         </div>
     );

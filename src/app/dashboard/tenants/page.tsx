@@ -15,7 +15,7 @@ export default async function TenantsPage() {
 
             <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
                 <h2 className="text-lg font-semibold mb-4 text-zinc-900 dark:text-zinc-100">Añadir Nueva Escuela</h2>
-                <form action={createTenant} className="flex flex-col sm:flex-row gap-4 items-end">
+                <form action={createTenant as any} className="flex flex-col sm:flex-row gap-4 items-end">
                     <div className="flex-1 space-y-2 w-full">
                         <label htmlFor="name" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nombre de la Escuela</label>
                         <input
